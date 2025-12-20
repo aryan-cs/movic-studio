@@ -1,0 +1,22 @@
+.gradio-container {
+    min-height: 100vh !important;
+    display: flex;
+    flex-direction: column;
+}
+
+.gradio-container > .main {
+    margin: auto !important;
+    width: 100%;
+    max-width: 1200px;
+}
+
+#centered-row {
+    display: flex;
+    justify-content: center;
+    width: 100%;
+}
+
+#title {
+    text-align: left;
+    margin-bottom: 20px;
+}
