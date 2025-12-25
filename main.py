@@ -50,7 +50,7 @@ class MovicStudio(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("Movic Studio - RapidOCR & Kokoro TTS")
+        self.title("Movic Studio")
         self.geometry("1400x900")
 
         self.project_dir = os.path.join(os.getcwd(), "cache")
