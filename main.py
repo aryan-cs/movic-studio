@@ -8,7 +8,8 @@ import uuid
 import threading
 import sys
 import time
-import urllib.request 
+import urllib.request
+import numpy as np # Required for video processing
 
 # --- 1. RAPIDOCR IMPORT ---
 try:
@@ -20,7 +21,7 @@ except ImportError as e:
     OCR_AVAILABLE = False
     ocr_engine = None
 
-# --- 2. LOCAL KOKORO TTS (NEW) ---
+# --- 2. LOCAL KOKORO TTS ---
 try:
     import soundfile as sf
     from kokoro_onnx import Kokoro
@@ -35,13 +36,13 @@ except ImportError as e:
 try:
     # Try v1 import structure first (Standard)
     from gtts import gTTS
-    from moviepy.editor import ImageClip, concatenate_videoclips, AudioFileClip
+    from moviepy.editor import ImageClip, concatenate_videoclips, AudioFileClip, ColorClip
     VIDEO_LIB_AVAILABLE = True
 except ImportError:
     try:
         # Try v2 import structure (Fallback)
         from gtts import gTTS
-        from moviepy import ImageClip, concatenate_videoclips, AudioFileClip
+        from moviepy import ImageClip, concatenate_videoclips, AudioFileClip, ColorClip
         VIDEO_LIB_AVAILABLE = True
     except ImportError as e:
         print(f"DEBUG: Video libraries failed: {e}")
@@ -57,30 +58,73 @@ class MovicStudio(ctk.CTk):
         self.title("Movic Studio - RapidOCR & Kokoro TTS")
         self.geometry("1400x900")
 
-        self.project_dir = os.path.join(os.getcwd(), "movic_project")
+        # CHANGED: Folder name is now "cache"
+        self.project_dir = os.path.join(os.getcwd(), "cache")
+        self.images_dir = os.path.join(self.project_dir, "images")
+        self.audio_dir = os.path.join(self.project_dir, "audio")
+        self.test_dir = os.path.join(self.project_dir, "test")
+        
         self.models_dir = os.path.join(os.getcwd(), "models")
+        
+        # Clear cache on startup
         self.ensure_dirs()
         
         self.panels_data = [] 
         self.current_step = 1
         
-        # --- KOKORO SETUP (UPDATED FOR YOUR FILES) ---
+        # --- KOKORO SETUP ---
         self.kokoro = None
-        # Updated paths based on your screenshot
+        # Updated paths based on your file structure
         self.model_path = os.path.join(self.models_dir, "kokoro-v1.0.int8.onnx")
         self.voices_path = os.path.join(self.models_dir, "voices-v1.0.bin")
         
-        # Kokoro Voice Options
+        # ALL KOKORO VOICES + ROBOT
         self.kokoro_voices = [
-            "af_bella", "af_sarah", "af_nicole", "af_sky",
-            "am_michael", "am_adam", "am_echo", "am_eric",
-            "bf_emma", "bf_isabella", "bm_george", "bm_lewis"
+            # American English
+            "af_heart", "af_alloy", "af_aoede", "af_bella", "af_jessica", 
+            "af_kore", "af_nicole", "af_nova", "af_river", "af_sarah", "af_sky",
+            "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam", 
+            "am_michael", "am_onyx", "am_puck", "am_santa",
+            
+            # British English
+            "bf_alice", "bf_emma", "bf_isabella", "bf_lily", 
+            "bm_daniel", "bm_fable", "bm_george", "bm_lewis",
+            
+            # Japanese
+            "jf_alpha", "jf_gongitsune", "jf_nezumi", "jf_tebukuro", "jm_kumo",
+            
+            # Mandarin Chinese
+            "zf_xiaobei", "zf_xiaoni", "zf_xiaoxiao", "zf_xiaoyi", 
+            "zm_yunjian", "zm_yunxi", "zm_yunxia", "zm_yunyang",
+            
+            # Spanish
+            "ef_dora", "em_alex", "em_santa",
+            
+            # French
+            "ff_siwis",
+            
+            # Hindi
+            "hf_alpha", "hf_beta", "hm_omega", "hm_psi",
+            
+            # Italian
+            "if_sara", "im_nicola",
+            
+            # Brazilian Portuguese
+            "pf_dora", "pm_alex", "pm_santa",
+
+            # Robot (gTTS)
+            "gtts_robot"
         ]
         
+        # --- Generate Display Mapping ---
+        self.display_to_id = {self.get_voice_display_name(v): v for v in self.kokoro_voices}
+        self.formatted_voice_list = list(self.display_to_id.keys())
+        
         self.available_voices = ["Voice 1", "Voice 2"]
+        # Store DISPLAY NAMES in the map now, not IDs
         self.voice_model_map = {
-            "Voice 1": "am_michael",
-            "Voice 2": "af_bella"
+            "Voice 1": self.get_voice_display_name("am_michael"),
+            "Voice 2": self.get_voice_display_name("af_bella")
         }
 
         # Initialize Kokoro in background
@@ -120,8 +164,44 @@ class MovicStudio(ctk.CTk):
         self.show_step(1)
         self.bind("<Control-z>", lambda event: self.handle_undo())
 
+    def get_voice_display_name(self, voice_id):
+        """Parses 'af_bella' into '[US] [FEM] Bella'"""
+        try:
+            if voice_id == "gtts_robot":
+                return "[System] [Bot] Robot"
+                
+            parts = voice_id.split('_')
+            prefix = parts[0]
+            name = parts[1].capitalize()
+            
+            lang_map = {
+                'a': 'US', 'b': 'UK', 'j': 'JP', 'z': 'ZH', 
+                'e': 'ES', 'f': 'FR', 'h': 'HI', 'i': 'IT', 'p': 'BR'
+            }
+            gender_map = {'f': 'FEM', 'm': 'MALE'}
+            
+            lang = lang_map.get(prefix[0], '??')
+            gender = gender_map.get(prefix[1], '?')
+            
+            return f"[{lang}] [{gender}] {name}"
+        except:
+            return voice_id # Fallback
+
     def ensure_dirs(self):
+        # 1. Clear "cache" folder if it exists
+        if os.path.exists(self.project_dir):
+            try:
+                shutil.rmtree(self.project_dir)
+                print(f"Cleared cache at: {self.project_dir}")
+            except Exception as e:
+                print(f"Warning: Could not clear cache: {e}")
+        
+        # 2. Recreate folders
         os.makedirs(self.project_dir, exist_ok=True)
+        os.makedirs(self.images_dir, exist_ok=True)
+        os.makedirs(self.audio_dir, exist_ok=True)
+        os.makedirs(self.test_dir, exist_ok=True)
+        
         os.makedirs(self.models_dir, exist_ok=True)
 
     def init_kokoro(self):
@@ -147,11 +227,7 @@ class MovicStudio(ctk.CTk):
         if not self.kokoro:
             raise Exception("Kokoro model not loaded yet.")
         
-        # Kokoro expects lang code. 'a' = American English, 'b' = British English
-        lang_code = 'a' if voice_style.startswith('a') else 'b'
-        
         # Generate audio (returns numpy array, sample_rate)
-        # Note: Depending on kokoro-onnx version, lang might default to en-us
         audio, sample_rate = self.kokoro.create(text, voice=voice_style, speed=1.0, lang="en-us")
         
         # Save to file
@@ -378,7 +454,8 @@ class MovicStudio(ctk.CTk):
             try:
                 crop = self.original_image.crop((fx1, fy1, fx2, fy2))
                 filename = f"panel_{unique_id[:8]}.png" 
-                save_path = os.path.join(self.project_dir, filename)
+                # CHANGED: Save to images dir
+                save_path = os.path.join(self.images_dir, filename)
                 crop.save(save_path)
                 previous_entry = existing_data_map.get(unique_id)
                 new_panels_data.append({
@@ -527,7 +604,8 @@ class MovicStudio(ctk.CTk):
             new_num = len(self.available_voices) + 1
             new_voice = f"Voice {new_num}"
             self.available_voices.append(new_voice)
-            self.voice_model_map[new_voice] = self.kokoro_voices[0] # Default to first kokoro voice
+            # Default to first available real voice display name
+            self.voice_model_map[new_voice] = self.formatted_voice_list[0]
             new_values = self.available_voices + ["Add new voice..."]
             for item in self.editor_region_map.values():
                 item['dropdown'].configure(values=new_values)
@@ -658,14 +736,35 @@ class MovicStudio(ctk.CTk):
         self.veo_input.pack(fill="x", pady=5)
         self.veo_input.insert("1.0", "Describe the visual style, camera movement, or specific animation details...")
 
+        # --- TIMING SETTINGS ---
+        self.timing_frame = ctk.CTkFrame(self.settings_frame, fg_color="transparent")
+        self.timing_frame.pack(fill="x", padx=20, pady=10)
+        
+        ctk.CTkLabel(self.timing_frame, text="Pause Duration (Between Panels):").pack(anchor="w")
+        self.entry_panel_pause = ctk.CTkEntry(self.timing_frame)
+        self.entry_panel_pause.pack(fill="x", pady=(0, 10))
+        self.entry_panel_pause.insert(0, "0.5")
+
+        ctk.CTkLabel(self.timing_frame, text="Pause Duration (Between Speech):").pack(anchor="w")
+        self.entry_speech_pause = ctk.CTkEntry(self.timing_frame)
+        self.entry_speech_pause.pack(fill="x", pady=(0, 10))
+        self.entry_speech_pause.insert(0, "0.25")
+
         # --- Voice Model Configuration ---
         ctk.CTkLabel(self.settings_frame, text="Voice Models (Kokoro):", font=("Arial", 14, "bold")).pack(anchor="w", padx=20, pady=(20, 5))
         self.voice_settings_scroll = ctk.CTkScrollableFrame(self.settings_frame, height=200, label_text="Configure Voices")
         self.voice_settings_scroll.pack(fill="x", padx=20, pady=5)
 
-        # Status Label
-        self.gen_status_label = ctk.CTkLabel(self.settings_frame, text="Ready to generate.", text_color="gray")
-        self.gen_status_label.pack(side="bottom", pady=20)
+        # Status Label & Progress Bar
+        self.status_container = ctk.CTkFrame(self.settings_frame, fg_color="transparent")
+        self.status_container.pack(side="bottom", fill="x", padx=20, pady=20)
+        
+        self.gen_status_label = ctk.CTkLabel(self.status_container, text="Ready to generate.", text_color="gray")
+        self.gen_status_label.pack(pady=(0, 5))
+        
+        self.progress_bar = ctk.CTkProgressBar(self.status_container, orientation="horizontal", mode="determinate")
+        self.progress_bar.set(0)
+        # REMOVED .pack() HERE so it starts hidden
 
     def toggle_veo_input(self, choice):
         if choice == "Animated":
@@ -693,16 +792,16 @@ class MovicStudio(ctk.CTk):
             row.pack(fill="x", pady=5)
             ctk.CTkLabel(row, text=voice, width=60, anchor="w").pack(side="left")
             
-            # Default to first option if not set
-            current_model = self.voice_model_map.get(voice, self.kokoro_voices[0])
-            model_var = ctk.StringVar(value=current_model)
+            # Get current Display Name (or default to first one)
+            current_val = self.voice_model_map.get(voice, self.formatted_voice_list[0])
+            model_var = ctk.StringVar(value=current_val)
             
             def update_map(choice, v=voice): self.voice_model_map[v] = choice
             
-            dropdown = ctk.CTkOptionMenu(row, variable=model_var, values=self.kokoro_voices, command=update_map, width=140)
+            # USE FORMATTED LIST HERE
+            dropdown = ctk.CTkOptionMenu(row, variable=model_var, values=self.formatted_voice_list, command=update_map, width=200)
             dropdown.pack(side="left", padx=10)
             
-            # Create button first so we can reference it
             test_btn = ctk.CTkButton(row, text="Test", width=50, fg_color="#555")
             test_btn.configure(command=lambda v=voice, b=test_btn: self.test_voice(v, b))
             test_btn.pack(side="right")
@@ -712,7 +811,10 @@ class MovicStudio(ctk.CTk):
         if not KOKORO_AVAILABLE: messagebox.showerror("Error", "Kokoro not loaded.\n(Check console)"); return
         if not self.kokoro: messagebox.showerror("Error", "Kokoro model failed to initialize.\nCheck 'models' folder."); return
         
-        style = self.voice_model_map.get(voice_name, "af_bella")
+        # 1. Get Display Name
+        display_name = self.voice_model_map.get(voice_name)
+        # 2. Lookup Real ID
+        style = self.display_to_id.get(display_name, "af_bella")
         
         # UI Feedback: Set Loading State
         btn_widget.configure(text="⏳", state="disabled")
@@ -720,7 +822,8 @@ class MovicStudio(ctk.CTk):
         threading.Thread(target=self._run_test_gen, args=(style, btn_widget)).start()
 
     def _run_test_gen(self, style, btn_widget):
-        temp_file = os.path.join(self.project_dir, "test_voice.wav")
+        # CHANGED: Save to test dir
+        temp_file = os.path.join(self.test_dir, "test_voice.wav")
         
         try:
             # 1. Force release of the previous file
@@ -735,7 +838,11 @@ class MovicStudio(ctk.CTk):
             time.sleep(0.1) 
 
             # 2. Generate new audio
-            self.generate_audio_clip_kokoro("This is a test of the requested voice.", style, temp_file)
+            if style == "gtts_robot":
+                 tts = gTTS(text="This is a test of the requested voice.", lang='en', slow=False)
+                 tts.save(temp_file)
+            else:
+                 self.generate_audio_clip_kokoro("This is a test of the requested voice.", style, temp_file)
             
             # 3. Play
             pygame.mixer.music.load(temp_file)
@@ -750,9 +857,13 @@ class MovicStudio(ctk.CTk):
             # If writing fails, it might be a permission issue; try a unique name as fallback
             try:
                 unique_name = f"test_{uuid.uuid4().hex[:6]}.wav"
-                alt_path = os.path.join(self.project_dir, unique_name)
+                alt_path = os.path.join(self.test_dir, unique_name)
                 print(f"Retrying with unique filename: {unique_name}")
-                self.generate_audio_clip_kokoro("This is a test of the requested voice.", style, alt_path)
+                if style == "gtts_robot":
+                    tts = gTTS(text="This is a test of the requested voice.", lang='en', slow=False)
+                    tts.save(alt_path)
+                else:
+                    self.generate_audio_clip_kokoro("This is a test of the requested voice.", style, alt_path)
                 pygame.mixer.music.load(alt_path)
                 pygame.mixer.music.play()
             except Exception as e2:
@@ -765,51 +876,121 @@ class MovicStudio(ctk.CTk):
     def run_generation(self):
         if not VIDEO_LIB_AVAILABLE: messagebox.showerror("Error", "Install moviepy"); return
         self.gen_status_label.configure(text="Generating...", text_color="orange")
+        self.progress_bar.pack(fill="x", pady=5) # SHOW THE BAR
+        self.progress_bar.set(0) 
         self.btn_next.configure(state="disabled")
         threading.Thread(target=self._video_worker).start()
 
     def _video_worker(self):
         try:
             clips = []
-            audio_dir = os.path.join(self.project_dir, "audio"); os.makedirs(audio_dir, exist_ok=True)
+            audio_path = self.audio_dir
             
+            # Retrieve PAUSE VALUES from UI
+            try:
+                panel_pause = float(self.entry_panel_pause.get())
+            except: panel_pause = 0.5
+            
+            try:
+                speech_pause = float(self.entry_speech_pause.get())
+            except: speech_pause = 0.25
+            
+            # --- HELPER: Safe Image Loading ---
+            def get_safe_clip(path, duration):
+                pil_img = Image.open(path)
+                
+                # 1. Handle Transparency (Paste on White)
+                if pil_img.mode in ('RGBA', 'LA') or (pil_img.mode == 'P' and 'transparency' in pil_img.info):
+                    pil_img = pil_img.convert('RGBA')
+                    bg = Image.new('RGB', pil_img.size, (255, 255, 255)) # White background
+                    bg.paste(pil_img, (0, 0), pil_img)
+                    pil_img = bg
+                else:
+                    pil_img = pil_img.convert('RGB')
+
+                # 2. Fix Odd Dimensions (Codec requires even numbers)
+                w, h = pil_img.size
+                new_w = w if w % 2 == 0 else w - 1
+                new_h = h if h % 2 == 0 else h - 1
+                if new_w != w or new_h != h:
+                    pil_img = pil_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+                # 3. Create Clip
+                return ImageClip(np.array(pil_img)).set_duration(duration)
+            # ----------------------------------
+            
+            total_panels = len(self.panels_data)
+
             for i, p in enumerate(self.panels_data):
+                # UPDATE PROGRESS
+                progress = (i) / total_panels
+                self.after(0, lambda v=progress: self.progress_bar.set(v))
+                
                 regions = p['text_regions']
                 img_path = p['path']
                 
+                # Case 1: Silent Panel
                 if not regions:
-                    clips.append(ImageClip(img_path).set_duration(2))
+                    # Apply Panel Pause to Silent Panel
+                    clips.append(get_safe_clip(img_path, 2.0 + panel_pause))
                     continue
 
+                # Case 2: Panel with Text
                 for j, r in enumerate(regions):
                     text = r['text']; voice = r['voice']
-                    style = self.voice_model_map.get(voice, "af_bella")
                     
-                    # Generate with Kokoro (LOCAL)
-                    aud_path = os.path.join(audio_dir, f"p{i}_r{j}.wav")
+                    display_name = self.voice_model_map.get(voice)
+                    style = self.display_to_id.get(display_name, "af_bella")
                     
-                    # Try Kokoro first, fallback if fails or not available
+                    # Generate audio
+                    aud_path = os.path.join(audio_path, f"p{i}_r{j}.wav")
                     success = False
-                    if KOKORO_AVAILABLE:
+                    
+                    if os.path.exists(aud_path):
+                        try: os.remove(aud_path)
+                        except: pass
+                    
+                    if style == "gtts_robot":
+                        try:
+                            tts = gTTS(text=text, lang='en')
+                            tts.save(aud_path)
+                            success = True
+                        except Exception as e:
+                            print(f"Robot Voice Error: {e}")
+                    elif KOKORO_AVAILABLE:
                         try:
                             self.generate_audio_clip_kokoro(text, style, aud_path)
                             success = True
                         except Exception as e:
-                            print(f"Kokoro gen failed for {text}: {e}")
+                            print(f"Kokoro gen failed: {e}")
                     
-                    if not success:
-                        # Fallback to gTTS
+                    if not success and style != "gtts_robot":
                         try:
-                            tts = gTTS(text=text, lang='en', slow=False)
+                            tts = gTTS(text=text, lang='en')
                             tts.save(aud_path)
                             success = True
                         except Exception as e:
-                            print(f"gTTS fallback failed: {e}")
+                            print(f"gTTS failed: {e}")
 
                     if success:
-                        ac = AudioFileClip(aud_path)
-                        ic = ImageClip(img_path).set_duration(ac.duration + 0.2).set_audio(ac)
-                        clips.append(ic)
+                        try:
+                            ac = AudioFileClip(aud_path)
+                            
+                            # Determine Pause Type
+                            is_last_bubble_in_panel = (j == len(regions) - 1)
+                            
+                            extra_pause = panel_pause if is_last_bubble_in_panel else speech_pause
+                            
+                            # duration = audio + buffer + specific pause
+                            total_duration = ac.duration + 0.1 + extra_pause
+                            
+                            ic = get_safe_clip(img_path, total_duration).set_audio(ac)
+                            clips.append(ic)
+                        except Exception as e:
+                             print(f"Error creating clip: {e}")
+
+            # COMPLETE PROGRESS
+            self.after(0, lambda: self.progress_bar.set(1.0))
 
             if not clips:
                 self.after(0, lambda: messagebox.showwarning("Empty", "No clips generated."))
@@ -817,15 +998,24 @@ class MovicStudio(ctk.CTk):
 
             final = concatenate_videoclips(clips, method="compose")
             out = os.path.join(self.project_dir, "comic_voiceover.mp4")
-            final.write_videofile(out, fps=24, codec="libx264", audio_codec="aac")
+            
+            final.write_videofile(
+                out, 
+                fps=24, 
+                codec="libx264", 
+                audio_codec="aac",
+                audio_bitrate="192k",
+                ffmpeg_params=["-pix_fmt", "yuv420p"]
+            )
             
             self.after(0, lambda: messagebox.showinfo("Done", f"Saved to {out}"))
             self.after(0, lambda: self.btn_next.configure(state="normal"))
             self.after(0, lambda: self.gen_status_label.configure(text="Done", text_color="green"))
             try: os.startfile(os.path.dirname(out))
             except: pass
+            
         except Exception as e:
-            print(e)
+            print(f"Worker Error: {e}")
             self.after(0, lambda: messagebox.showerror("Error", str(e)))
             self.after(0, lambda: self.btn_next.configure(state="normal"))
 
