@@ -1,0 +1,11 @@
+{
+  "files.exclude": {
+    "uv.lock": true,
+    ".venv": true,
+    ".vscode": true,
+    ".python-version": true,
+    ".gitignore": true,
+    "pyproject.toml": true,
+    "README.md": true
+  }
+}
