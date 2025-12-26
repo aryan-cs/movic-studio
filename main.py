@@ -11,6 +11,7 @@ import time
 import urllib.request
 import numpy as np
 
+# --- 1. RAPIDOCR IMPORT ---
 try:
     from rapidocr_onnxruntime import RapidOCR
     OCR_AVAILABLE = True
@@ -20,6 +21,7 @@ except ImportError as e:
     OCR_AVAILABLE = False
     ocr_engine = None
 
+# --- 2. LOCAL KOKORO TTS ---
 try:
     import soundfile as sf
     from kokoro_onnx import Kokoro
@@ -30,6 +32,7 @@ except ImportError as e:
     print(f"DEBUG: Kokoro/Soundfile import failed: {e}")
     KOKORO_AVAILABLE = False
 
+# --- 3. VIDEO GENERATION ---
 try:
     from gtts import gTTS
     from moviepy.editor import ImageClip, concatenate_videoclips, AudioFileClip, ColorClip
@@ -43,8 +46,37 @@ except ImportError:
         print(f"DEBUG: Video libraries failed: {e}")
         VIDEO_LIB_AVAILABLE = False
 
+# --- THEME & FONT SETUP ---
 ctk.set_appearance_mode("Dark")
-ctk.set_default_color_theme("blue")
+
+BUTTON_HEIGHT = 40
+BUTTON_PADDING = 15  # Global padding variable
+THEME_COLOR = "#e80049" 
+
+# 1. Load Local Font
+font_path = os.path.abspath(os.path.join("assets", "font", "Archivo.ttf"))
+
+if os.path.exists(font_path):
+    print(f"Loading font from: {font_path}")
+    try:
+        ctk.FontManager.load_font(font_path)
+    except Exception as e:
+        print(f"Font loading warning: {e}")
+else:
+    print(f"Font not found at: {font_path}")
+
+# 2. Load Custom Theme
+theme_path = os.path.join("assets", "custom_theme.json")
+try:
+    if os.path.exists(theme_path):
+        ctk.set_default_color_theme(theme_path)
+    else:
+        print("Theme file not found in assets/custom_theme.json")
+        ctk.set_default_color_theme("blue")
+except Exception as e:
+    print(f"Theme load error: {e}. Falling back to blue.")
+    ctk.set_default_color_theme("blue")
+
 
 class MovicStudio(ctk.CTk):
     def __init__(self):
@@ -77,22 +109,6 @@ class MovicStudio(ctk.CTk):
             
             "bf_alice", "bf_emma", "bf_isabella", "bf_lily", 
             "bm_daniel", "bm_fable", "bm_george", "bm_lewis",
-            
-            # "jf_alpha", "jf_gongitsune", "jf_nezumi", "jf_tebukuro", "jm_kumo",
-            
-            # "zf_xiaobei", "zf_xiaoni", "zf_xiaoxiao", "zf_xiaoyi", 
-            # "zm_yunjian", "zm_yunxi", "zm_yunxia", "zm_yunyang",
-            
-            # "ef_dora", "em_alex", "em_santa",
-            
-            # "ff_siwis",
-            
-            # "hf_alpha", "hf_beta", "hm_omega", "hm_psi",
-            
-            # "if_sara", "im_nicola",
-            
-            # "pf_dora", "pm_alex", "pm_santa",
-
             "gtts_robot"
         ]
         
@@ -116,17 +132,20 @@ class MovicStudio(ctk.CTk):
         self.current_editing_index = -1; self.swap_source_index = None 
         self.editor_region_map = {} 
 
+        # Main Container
         self.container = ctk.CTkFrame(self, fg_color="transparent")
         self.container.pack(fill="both", expand=True, padx=10, pady=(10, 0))
 
+        # Nav Bar
         self.nav_bar = ctk.CTkFrame(self, height=60, fg_color="transparent")
         self.nav_bar.pack(fill="x", side="bottom", padx=20, pady=20)
 
-        self.btn_back = ctk.CTkButton(self.nav_bar, text="< Back", command=self.go_back, width=120, fg_color="gray")
-        self.btn_back.pack(side="left")
+        # Nav Buttons (Padding)
+        self.btn_back = ctk.CTkButton(self.nav_bar, text="Back", command=self.go_back, width=120, height=BUTTON_HEIGHT, fg_color="transparent", border_width=2)
+        self.btn_back.pack(side="left", padx=BUTTON_PADDING)
 
-        self.btn_next = ctk.CTkButton(self.nav_bar, text="Next >", command=self.go_next, width=120, fg_color="green")
-        self.btn_next.pack(side="right")
+        self.btn_next = ctk.CTkButton(self.nav_bar, text="Next", command=self.go_next, width=120, height=BUTTON_HEIGHT)
+        self.btn_next.pack(side="right", padx=BUTTON_PADDING)
 
         self.frames = {}
         self.frames[1] = ctk.CTkFrame(self.container, fg_color="transparent")
@@ -140,7 +159,6 @@ class MovicStudio(ctk.CTk):
         self.bind("<Control-z>", lambda event: self.handle_undo())
 
     def get_voice_display_name(self, voice_id):
-        """Parses 'af_bella' into '[US] [FEM] Bella'"""
         try:
             if voice_id == "gtts_robot":
                 return "[System] [Bot] Robot"
@@ -174,11 +192,9 @@ class MovicStudio(ctk.CTk):
         os.makedirs(self.images_dir, exist_ok=True)
         os.makedirs(self.audio_dir, exist_ok=True)
         os.makedirs(self.test_dir, exist_ok=True)
-        
         os.makedirs(self.models_dir, exist_ok=True)
 
     def init_kokoro(self):
-        """Loads local model files"""
         try:
             if not os.path.exists(self.model_path):
                 print(f"Error: Model not found at {self.model_path}")
@@ -195,12 +211,9 @@ class MovicStudio(ctk.CTk):
             print(f"Failed to load Kokoro: {e}")
 
     def generate_audio_clip_kokoro(self, text, voice_style, output_path):
-        """Generates audio using local Kokoro model"""
         if not self.kokoro:
             raise Exception("Kokoro model not loaded yet.")
-        
         audio, sample_rate = self.kokoro.create(text, voice=voice_style, speed=1.0, lang="en-us")
-        
         sf.write(output_path, audio, sample_rate)
         return output_path
 
@@ -210,15 +223,15 @@ class MovicStudio(ctk.CTk):
         self.current_step = step_num
         
         if step_num == 1:
-            self.btn_back.configure(state="disabled", fg_color="#333")
-            self.btn_next.configure(text="Next >", state="normal", fg_color="green", command=self.go_next)
+            self.btn_back.configure(state="disabled", fg_color="transparent", text_color="gray")
+            self.btn_next.configure(text="Next", state="normal", command=self.go_next)
         else:
-            self.btn_back.configure(state="normal", fg_color="gray")
+            self.btn_back.configure(state="normal", fg_color="transparent", text_color="white")
             
         if step_num == 3:
-            self.btn_next.configure(text="Generate Video", fg_color="#D35B58", command=self.run_generation)
+            self.btn_next.configure(text="Generate Video", command=self.run_generation)
         else:
-            self.btn_next.configure(text="Next >", fg_color="green", command=self.go_next)
+            self.btn_next.configure(text="Next", command=self.go_next)
 
     def go_next(self):
         if self.current_step == 1:
@@ -267,7 +280,7 @@ class MovicStudio(ctk.CTk):
             self.loading_window.geometry(f"+{x}+{y}")
         except: pass
         
-        ctk.CTkLabel(self.loading_window, text="✨ Auto-Detecting Text...", font=("Arial", 16, "bold")).pack(pady=20)
+        ctk.CTkLabel(self.loading_window, text="Scanning for text...", font=("Archivo", 16, "bold")).pack(pady=20)
         self.progress_label = ctk.CTkLabel(self.loading_window, text="Initializing...", text_color="gray")
         self.progress_label.pack(pady=10)
         
@@ -335,13 +348,18 @@ class MovicStudio(ctk.CTk):
         self.pc_sidebar = ctk.CTkFrame(parent, width=200, corner_radius=0)
         self.pc_sidebar.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
         ctk.CTkLabel(self.pc_sidebar, text="Step 1: Panelize", font=ctk.CTkFont(size=20, weight="bold")).pack(pady=(20, 10))
-        ctk.CTkButton(self.pc_sidebar, text="Load Image", command=self.load_image).pack(padx=20, pady=10)
-        ctk.CTkButton(self.pc_sidebar, text="Undo (Ctrl+Z)", command=lambda: self.undo_selection(self.canvas_cutter, self.rectangles), fg_color="transparent", border_width=2).pack(padx=20, pady=10)
+        
+        # Sidebar Buttons (Padding 15)
+        # Using fill="x" so they span the width nicely, but padx=BUTTON_PADDING keeps them off the edge
+        ctk.CTkButton(self.pc_sidebar, text="Load Image", command=self.load_image, height=BUTTON_HEIGHT).pack(padx=BUTTON_PADDING, pady=10, fill="x")
+        ctk.CTkButton(self.pc_sidebar, text="Undo (Ctrl+Z)", command=lambda: self.undo_selection(self.canvas_cutter, self.rectangles), fg_color="transparent", border_width=2, height=BUTTON_HEIGHT).pack(padx=BUTTON_PADDING, pady=20, fill="x")
+        
         self.status_label = ctk.CTkLabel(self.pc_sidebar, text="No image loaded", text_color="gray")
         self.status_label.pack(side="bottom", pady=20)
         self.canvas_frame = ctk.CTkFrame(parent)
         self.canvas_frame.grid(row=0, column=1, sticky="nsew")
-        self.canvas_cutter = tk.Canvas(self.canvas_frame, bg="#2b2b2b", highlightthickness=0)
+        
+        self.canvas_cutter = tk.Canvas(self.canvas_frame, bg="#1a1a1a", highlightthickness=0)
         self.canvas_cutter.pack(fill="both", expand=True)
         self.canvas_cutter.bind("<ButtonPress-1>", lambda e: self.on_press(e, self.canvas_cutter))
         self.canvas_cutter.bind("<B1-Motion>", lambda e: self.on_drag(e, self.canvas_cutter))
@@ -377,14 +395,15 @@ class MovicStudio(ctk.CTk):
             self.cutter_scale, self.cutter_ox, self.cutter_oy = scale, offset_x, offset_y
         else:
             self.editor_scale, self.editor_ox, self.editor_oy = scale, offset_x, offset_y
-        canvas.create_rectangle(0, 0, cw, ch, fill="#2b2b2b", outline="") 
+        
+        canvas.create_rectangle(0, 0, cw, ch, fill="#1a1a1a", outline="") 
         canvas.create_image(offset_x, offset_y, anchor="nw", image=tk_image)
         canvas.create_rectangle(offset_x, offset_y, offset_x + new_w, offset_y + new_h, outline="#444", width=1)
 
     def on_press(self, event, canvas):
         self.start_x = canvas.canvasx(event.x)
         self.start_y = canvas.canvasy(event.y)
-        self.current_rect = canvas.create_rectangle(self.start_x, self.start_y, self.start_x, self.start_y, outline="cyan", width=2, dash=(4, 2))
+        self.current_rect = canvas.create_rectangle(self.start_x, self.start_y, self.start_x, self.start_y, outline=THEME_COLOR, width=2, dash=(4, 2))
 
     def on_drag(self, event, canvas):
         if not self.current_rect: return
@@ -432,32 +451,48 @@ class MovicStudio(ctk.CTk):
     def setup_text_selector_ui(self, parent):
         parent.grid_columnconfigure(0, weight=1)
         parent.grid_rowconfigure(0, weight=1)
+        
+        # --- 1. GRID FRAME (Panel Selector) ---
         self.text_grid_frame = ctk.CTkFrame(parent, fg_color="transparent")
         self.text_grid_frame.grid(row=0, column=0, sticky="nsew")
         self.text_grid_frame.grid_columnconfigure(0, weight=1)
-        self.text_grid_frame.grid_rowconfigure(1, weight=1)
-        ctk.CTkLabel(self.text_grid_frame, text="Step 2: Reorder & Select Text", font=("Arial", 18, "bold")).grid(row=0, column=0, pady=10)
-        self.scroll_frame = ctk.CTkScrollableFrame(self.text_grid_frame, orientation="horizontal", height=320, label_text="Panels (Left to Right)")
-        self.scroll_frame.grid(row=1, column=0, sticky="new", padx=20, pady=10)
         
+        self.text_grid_frame.grid_rowconfigure(0, weight=0) # Label
+        self.text_grid_frame.grid_rowconfigure(1, weight=1) # Scroll frame expands
+        
+        ctk.CTkLabel(self.text_grid_frame, text="Step 2: Reorder & Select Text", font=("Archivo", 18, "bold")).grid(row=0, column=0, pady=(40, 10))
+        
+        self.scroll_frame = ctk.CTkScrollableFrame(self.text_grid_frame, orientation="horizontal", height=320, label_text="Panels")
+        self.scroll_frame.grid(row=1, column=0, sticky="ew", padx=20)
+        
+        # --- 2. EDITOR FRAME ---
         self.text_editor_frame = ctk.CTkFrame(parent, fg_color="transparent")
         self.text_editor_frame.grid_columnconfigure(1, weight=3) 
         self.text_editor_frame.grid_columnconfigure(2, weight=1) 
         self.text_editor_frame.grid_rowconfigure(0, weight=1)
+        
         self.te_sidebar = ctk.CTkFrame(self.text_editor_frame, width=150, corner_radius=0)
         self.te_sidebar.grid(row=0, column=0, sticky="nsew")
-        ctk.CTkLabel(self.te_sidebar, text="Tools", font=("Arial", 14, "bold")).pack(pady=20)
-        ctk.CTkButton(self.te_sidebar, text="Undo Box", command=self.handle_undo, fg_color="transparent", border_width=2).pack(pady=10)
-        self.btn_auto_detect = ctk.CTkButton(self.te_sidebar, text="✨ Auto Detect", command=self.run_auto_detect, fg_color="#6A4C93")
-        self.btn_auto_detect.pack(pady=10)
-        ctk.CTkButton(self.te_sidebar, text="Save & Back", command=self.save_text_regions, fg_color="green").pack(pady=20)
+        
+        ctk.CTkLabel(self.te_sidebar, text="Tools", font=("Archivo", 14, "bold")).pack(pady=20)
+        
+        # Sidebar Buttons (Padding 15)
+        ctk.CTkButton(self.te_sidebar, text="Undo Box", command=self.handle_undo, fg_color="transparent", border_width=2, height=32).pack(pady=10, padx=BUTTON_PADDING, fill="x")
+        
+        self.btn_auto_detect = ctk.CTkButton(self.te_sidebar, text="Scan", command=self.run_auto_detect, height=32) 
+        self.btn_auto_detect.pack(pady=10, padx=BUTTON_PADDING, fill="x")
+        
+        ctk.CTkButton(self.te_sidebar, text="Save & Back", command=self.save_text_regions, height=32).pack(pady=20, padx=BUTTON_PADDING, fill="x")
+        
         self.lbl_ocr_status = ctk.CTkLabel(self.te_sidebar, text="OCR: Ready", text_color="gray")
         self.lbl_ocr_status.pack(side="bottom", pady=10)
-        self.canvas_text = tk.Canvas(self.text_editor_frame, bg="#2b2b2b", highlightthickness=0)
+        
+        self.canvas_text = tk.Canvas(self.text_editor_frame, bg="#1a1a1a", highlightthickness=0)
         self.canvas_text.grid(row=0, column=1, sticky="nsew", padx=5)
+        
         self.te_data_panel = ctk.CTkFrame(self.text_editor_frame, width=300, corner_radius=0)
         self.te_data_panel.grid(row=0, column=2, sticky="nsew", padx=(0,0))
-        ctk.CTkLabel(self.te_data_panel, text="Detected Text", font=("Arial", 16, "bold")).pack(pady=10)
+        ctk.CTkLabel(self.te_data_panel, text="Detected Text", font=("Archivo", 16, "bold")).pack(pady=10)
         self.ocr_scroll = ctk.CTkScrollableFrame(self.te_data_panel, label_text="Text Regions")
         self.ocr_scroll.pack(fill="both", expand=True, padx=5, pady=5)
         self.text_rects = []
@@ -498,10 +533,10 @@ class MovicStudio(ctk.CTk):
     def run_auto_detect(self):
         if not OCR_AVAILABLE or ocr_engine is None: return
         current_panel = self.panels_data[self.current_editing_index]
-        self.lbl_ocr_status.configure(text="Scanning...", text_color="orange")
+        self.lbl_ocr_status.configure(text="Scanning...", text_color=THEME_COLOR)
         self.loading_card = ctk.CTkFrame(self.ocr_scroll, fg_color="transparent")
         self.loading_card.pack(fill="x", pady=20)
-        ctk.CTkLabel(self.loading_card, text="✨ Scanning...", text_color="#6A4C93", font=("Arial", 14, "bold")).pack()
+        ctk.CTkLabel(self.loading_card, text="Scanning...", text_color="gray", font=("Archivo", 14, "bold")).pack()
         def _scan():
             result, elapse = ocr_engine(current_panel['path'])
             self.after(0, lambda: self.apply_auto_detect_results(result))
@@ -525,7 +560,7 @@ class MovicStudio(ctk.CTk):
             cy1 = (iy1 * self.editor_scale) + self.editor_oy
             cx2 = (ix2 * self.editor_scale) + self.editor_ox
             cy2 = (iy2 * self.editor_scale) + self.editor_oy
-            rect_id = self.canvas_text.create_rectangle(cx1, cy1, cx2, cy2, outline="#FF00FF", width=2)
+            rect_id = self.canvas_text.create_rectangle(cx1, cy1, cx2, cy2, outline=THEME_COLOR, width=2)
             self.text_rects.append((rect_id, (cx1, cy1, cx2, cy2)))
             self.add_sidebar_entry(rect_id, text, "Voice 1")
 
@@ -546,14 +581,14 @@ class MovicStudio(ctk.CTk):
         card.pack(fill="x", pady=5, padx=5)
         header = ctk.CTkFrame(card, fg_color="transparent")
         header.pack(fill="x", pady=2)
-        ctk.CTkLabel(header, text="Speaker:", font=("Arial", 10)).pack(side="left", padx=5)
+        ctk.CTkLabel(header, text="Speaker:", font=("Archivo", 10)).pack(side="left", padx=5)
         voice_var = ctk.StringVar(value=voice_val)
         menu_values = self.available_voices + ["Add new voice..."]
         def on_voice_change(choice):
             self.check_new_voice(choice, voice_var)
         dropdown = ctk.CTkOptionMenu(header, variable=voice_var, values=menu_values, command=on_voice_change, width=100, height=20)
         dropdown.pack(side="right", padx=5)
-        txt_box = ctk.CTkTextbox(card, height=60, font=("Arial", 12))
+        txt_box = ctk.CTkTextbox(card, height=60, font=("Archivo", 12))
         txt_box.pack(fill="x", padx=5, pady=5)
         txt_box.insert("1.0", text_content)
         self.editor_region_map[canvas_id] = {'widget_frame': card, 'text_box': txt_box, 'voice_var': voice_var, 'dropdown': dropdown}
@@ -582,11 +617,14 @@ class MovicStudio(ctk.CTk):
         path = panel['path']
         region_count = len(panel['text_regions'])
         is_swap_source = (self.swap_source_index == idx)
-        border_color = "orange" if is_swap_source else "gray"
+        border_color = THEME_COLOR if is_swap_source else "gray" # Theme match
         border_width = 3 if is_swap_source else 0 
-        card = ctk.CTkFrame(self.scroll_frame, width=220, fg_color="#333", border_color=border_color, border_width=border_width)
+        
+        # Main Card Frame
+        card = ctk.CTkFrame(self.scroll_frame, width=400, fg_color="#333", border_color=border_color, border_width=border_width)
         card.pack(side="left", padx=10, fill="y")
-        ctk.CTkLabel(card, text=f"Panel {idx+1}", font=("Arial", 12, "bold")).pack(pady=(5,0))
+        
+        ctk.CTkLabel(card, text=f"Panel {idx+1}", font=("Archivo", 12, "bold"), width=300).pack(pady=(5,0), padx=10)
         try:
             img = Image.open(path)
             ratio = 200 / img.height
@@ -594,18 +632,35 @@ class MovicStudio(ctk.CTk):
             ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(pw, 200))
             ctk.CTkLabel(card, image=ctk_img, text="").pack(pady=5, padx=8)
         except: ctk.CTkLabel(card, text="Error").pack(pady=20, padx=8)
-        ctk.CTkLabel(card, text=f"Text Boxes: {region_count}", text_color="green" if region_count > 0 else "gray").pack()
+        ctk.CTkLabel(card, text=f"Text Boxes: {region_count}", text_color="#D5D9DE" if region_count > 0 else "gray").pack()
+        
+        # --- FIXED HIGHLIGHT CUTOFF ---
+        # The buttons are now inside the CARD frame directly, ensuring border wraps them.
         controls = ctk.CTkFrame(card, fg_color="transparent")
-        controls.pack(pady=10) 
+        
+        # CHANGE HERE: Removed fill="x". 
+        # This allows the frame to shrink to the size of the buttons 
+        # and naturally center itself in the card.
+        controls.pack(pady=(10, 15)) 
+        
         if self.swap_source_index is None:
             btn_text, btn_fg, cmd = "Reorder", "gray", lambda i=idx: self.toggle_swap_mode(i)
         elif self.swap_source_index == idx:
-            btn_text, btn_fg, cmd = "Cancel", "orange", lambda i=idx: self.toggle_swap_mode(i)
+            btn_text, btn_fg, cmd = "Cancel", THEME_COLOR, lambda i=idx: self.toggle_swap_mode(i)
         else:
-            btn_text, btn_fg, cmd = "Swap Here", "#1f6aa5", lambda i=idx: self.execute_swap(i)
-        ctk.CTkButton(controls, text=btn_text, fg_color=btn_fg, width=80, height=25, command=cmd).pack(side="left", padx=2)
-        ctk.CTkButton(controls, text="Edit", width=80, height=25, command=lambda i=idx: self.open_text_editor(i)).pack(side="left", padx=2)
-
+            btn_text, btn_fg, cmd = "Swap Here", THEME_COLOR, lambda i=idx: self.execute_swap(i)
+        
+        # Determine width based on whether Edit is hidden or not
+        # If standard (Edit visible): width 80. If Reorder Mode (Edit hidden): width 175 to fill space.
+        btn_width = 175 if self.swap_source_index is not None else 80 
+        
+        # Transparent BG for Reorder to keep it low profile. Added BUTTON_PADDING (15).
+        ctk.CTkButton(controls, text=btn_text, fg_color=btn_fg if btn_fg != "gray" else "transparent", border_width=2 if btn_fg=="gray" else 0, width=btn_width, height=30, command=cmd).pack(side="left", padx=5)
+        
+        # Hide Edit Button if we are in any reordering mode.
+        if self.swap_source_index is None:
+            ctk.CTkButton(controls, text="Edit", width=80, height=30, command=lambda i=idx: self.open_text_editor(i)).pack(side="left", padx=5)
+            
     def toggle_swap_mode(self, index):
         self.swap_source_index = None if self.swap_source_index == index else index
         self.refresh_text_selector_ui()
@@ -637,7 +692,7 @@ class MovicStudio(ctk.CTk):
             voice = region_data.get('voice', "Voice 1")
             cx1, cy1 = (coords[0] * self.editor_scale) + self.editor_ox, (coords[1] * self.editor_scale) + self.editor_oy
             cx2, cy2 = (coords[2] * self.editor_scale) + self.editor_ox, (coords[3] * self.editor_scale) + self.editor_oy
-            rect_id = self.canvas_text.create_rectangle(cx1, cy1, cx2, cy2, outline="cyan", width=2, dash=(4, 2))
+            rect_id = self.canvas_text.create_rectangle(cx1, cy1, cx2, cy2, outline=THEME_COLOR, width=2, dash=(4, 2))
             self.text_rects.append((rect_id, (cx1, cy1, cx2, cy2)))
             self.add_sidebar_entry(rect_id, text, voice)
 
@@ -667,22 +722,22 @@ class MovicStudio(ctk.CTk):
         self.script_frame = ctk.CTkFrame(parent, fg_color="transparent")
         self.script_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
         
-        ctk.CTkLabel(self.script_frame, text="Final Script Preview", font=("Arial", 20, "bold")).pack(pady=10, anchor="w")
+        ctk.CTkLabel(self.script_frame, text="Final Script Preview", font=("Archivo", 20, "bold")).pack(pady=10, anchor="w")
         self.script_scroll = ctk.CTkScrollableFrame(self.script_frame, label_text="Dialogue Lines")
         self.script_scroll.pack(fill="both", expand=True, padx=5, pady=5)
 
         self.settings_frame = ctk.CTkFrame(parent, fg_color="#333", corner_radius=10)
         self.settings_frame.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
 
-        ctk.CTkLabel(self.settings_frame, text="Generation Settings", font=("Arial", 20, "bold")).pack(pady=20)
+        ctk.CTkLabel(self.settings_frame, text="Generation Settings", font=("Archivo", 20, "bold")).pack(pady=20)
 
-        ctk.CTkLabel(self.settings_frame, text="Animation Style:", font=("Arial", 14)).pack(anchor="w", padx=20, pady=(10, 5))
+        ctk.CTkLabel(self.settings_frame, text="Animation Style:", font=("Archivo", 14)).pack(anchor="w", padx=20, pady=(10, 5))
         self.anim_style_var = ctk.StringVar(value="Voiceover")
         self.anim_style_menu = ctk.CTkOptionMenu(self.settings_frame, variable=self.anim_style_var, values=["Voiceover", "Animated"], command=self.toggle_veo_input)
         self.anim_style_menu.pack(fill="x", padx=20, pady=5)
 
         self.veo_frame = ctk.CTkFrame(self.settings_frame, fg_color="transparent")
-        ctk.CTkLabel(self.veo_frame, text="Veo 3 Prompt / Instructions:", font=("Arial", 14)).pack(anchor="w", pady=(15, 5))
+        ctk.CTkLabel(self.veo_frame, text="Veo 3 Prompt / Instructions:", font=("Archivo", 14)).pack(anchor="w", pady=(15, 5))
         self.veo_input = ctk.CTkTextbox(self.veo_frame, height=100)
         self.veo_input.pack(fill="x", pady=5)
         self.veo_input.insert("1.0", "Describe the visual style, camera movement, or specific animation details...")
@@ -700,7 +755,7 @@ class MovicStudio(ctk.CTk):
         self.entry_speech_pause.pack(fill="x", pady=(0, 10))
         self.entry_speech_pause.insert(0, "0.25")
 
-        ctk.CTkLabel(self.settings_frame, text="Voice Models (Kokoro):", font=("Arial", 14, "bold")).pack(anchor="w", padx=20, pady=(20, 5))
+        ctk.CTkLabel(self.settings_frame, text="Voice Models (Kokoro):", font=("Archivo", 14, "bold")).pack(anchor="w", padx=20, pady=(20, 5))
         self.voice_settings_scroll = ctk.CTkScrollableFrame(self.settings_frame, height=200, label_text="Configure Voices")
         self.voice_settings_scroll.pack(fill="x", padx=20, pady=5)
 
@@ -724,11 +779,11 @@ class MovicStudio(ctk.CTk):
         for p_idx, panel in enumerate(self.panels_data):
             regions = panel.get('text_regions', [])
             if not regions: continue
-            ctk.CTkLabel(self.script_scroll, text=f"Panel {p_idx+1}", font=("Arial", 14, "bold"), anchor="w", text_color="cyan").pack(fill="x", pady=(15, 5))
+            ctk.CTkLabel(self.script_scroll, text=f"Panel {p_idx+1}", font=("Archivo", 14, "bold"), anchor="w", text_color=THEME_COLOR).pack(fill="x", pady=(15, 5))
             for r_idx, region in enumerate(regions):
                 row = ctk.CTkFrame(self.script_scroll, fg_color="#333")
                 row.pack(fill="x", pady=4, padx=5)
-                ctk.CTkLabel(row, text=f"{region.get('voice')}:", width=80, font=("Arial", 12, "bold")).pack(side="left", padx=10, anchor="n", pady=5)
+                ctk.CTkLabel(row, text=f"{region.get('voice')}:", width=80, font=("Archivo", 12, "bold")).pack(side="left", padx=10, anchor="n", pady=5)
                 ctk.CTkLabel(row, text=region.get('text'), wraplength=400, justify="left").pack(side="left", fill="x", padx=10, pady=5)
 
         for w in self.voice_settings_scroll.winfo_children(): w.destroy()
@@ -745,9 +800,10 @@ class MovicStudio(ctk.CTk):
             dropdown = ctk.CTkOptionMenu(row, variable=model_var, values=self.formatted_voice_list, command=update_map, width=200)
             dropdown.pack(side="left", padx=10)
             
-            test_btn = ctk.CTkButton(row, text="Test", width=50, fg_color="#555")
+            # Test Buttons (Padding)
+            test_btn = ctk.CTkButton(row, text="Test", width=50, height=30, fg_color="#555")
             test_btn.configure(command=lambda v=voice, b=test_btn: self.test_voice(v, b))
-            test_btn.pack(side="right")
+            test_btn.pack(side="right", padx=BUTTON_PADDING)
 
     def test_voice(self, voice_name, btn_widget):
         if not KOKORO_AVAILABLE: messagebox.showerror("Error", "Kokoro not loaded.\n(Check console)"); return
@@ -897,7 +953,6 @@ class MovicStudio(ctk.CTk):
                             ac = AudioFileClip(aud_path)
                             
                             is_last_bubble_in_panel = (j == len(regions) - 1)
-                            
                             extra_pause = panel_pause if is_last_bubble_in_panel else speech_pause
                             
                             total_duration = ac.duration + 0.1 + extra_pause
