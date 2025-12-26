@@ -11,7 +11,6 @@ import time
 import urllib.request
 import numpy as np
 
-# --- 1. RAPIDOCR IMPORT ---
 try:
     from rapidocr_onnxruntime import RapidOCR
     OCR_AVAILABLE = True
@@ -21,7 +20,6 @@ except ImportError as e:
     OCR_AVAILABLE = False
     ocr_engine = None
 
-# --- 2. LOCAL KOKORO TTS ---
 try:
     import soundfile as sf
     from kokoro_onnx import Kokoro
@@ -32,7 +30,6 @@ except ImportError as e:
     print(f"DEBUG: Kokoro/Soundfile import failed: {e}")
     KOKORO_AVAILABLE = False
 
-# --- 3. VIDEO GENERATION ---
 try:
     from gtts import gTTS
     from moviepy.editor import ImageClip, concatenate_videoclips, AudioFileClip, ColorClip
@@ -46,14 +43,12 @@ except ImportError:
         print(f"DEBUG: Video libraries failed: {e}")
         VIDEO_LIB_AVAILABLE = False
 
-# --- THEME & FONT SETUP ---
 ctk.set_appearance_mode("Dark")
 
 BUTTON_HEIGHT = 40
-BUTTON_PADDING = 15  # Global padding variable
+BUTTON_PADDING = 15
 THEME_COLOR = "#e80049" 
 
-# 1. Load Local Font
 font_path = os.path.abspath(os.path.join("assets", "font", "Archivo.ttf"))
 
 if os.path.exists(font_path):
@@ -65,7 +60,6 @@ if os.path.exists(font_path):
 else:
     print(f"Font not found at: {font_path}")
 
-# 2. Load Custom Theme
 theme_path = os.path.join("assets", "custom_theme.json")
 try:
     if os.path.exists(theme_path):
@@ -131,15 +125,12 @@ class MovicStudio(ctk.CTk):
         self.current_editing_index = -1; self.swap_source_index = None 
         self.editor_region_map = {} 
 
-        # Main Container
         self.container = ctk.CTkFrame(self, fg_color="transparent")
         self.container.pack(fill="both", expand=True, padx=10, pady=(10, 0))
 
-        # Nav Bar
         self.nav_bar = ctk.CTkFrame(self, height=60, fg_color="transparent")
         self.nav_bar.pack(fill="x", side="bottom", padx=20, pady=20)
 
-        # --- REFACTORED NAV BUTTONS ---
         self.btn_back = self.create_btn(
             self.nav_bar, "Back", self.go_back, 
             mode="outline", width=120, state="disabled"
@@ -163,7 +154,6 @@ class MovicStudio(ctk.CTk):
         self.show_step(1)
         self.bind("<Control-z>", lambda event: self.handle_undo())
 
-    # --- NEW HELPER FUNCTION ---
     def create_btn(self, parent, text, command, mode="primary", width=None, height=BUTTON_HEIGHT, **kwargs):
         """
         Abstracts button creation.
@@ -177,14 +167,12 @@ class MovicStudio(ctk.CTk):
             "corner_radius": 20
         }
         
-        # Apply specific styling based on mode
         if mode == "primary":
-            # Default theme color is automatic, but we can enforce text color
             cfg["text_color"] = "white"
         elif mode == "outline":
             cfg["fg_color"] = "transparent"
             cfg["border_width"] = 2
-            cfg["border_color"] = kwargs.get("border_color", "#888") # Default gray border
+            cfg["border_color"] = kwargs.get("border_color", "#888")
             cfg["text_color"] = "white"
         elif mode == "ghost":
             cfg["fg_color"] = "transparent"
@@ -194,7 +182,6 @@ class MovicStudio(ctk.CTk):
         if width:
             cfg["width"] = width
             
-        # Merge extra kwargs (allows overriding any default)
         cfg.update(kwargs)
         
         return ctk.CTkButton(parent, **cfg)
@@ -390,7 +377,6 @@ class MovicStudio(ctk.CTk):
         self.pc_sidebar.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
         ctk.CTkLabel(self.pc_sidebar, text="Step 1: Panelize", font=ctk.CTkFont(size=20, weight="bold")).pack(pady=(20, 10))
         
-        # --- REFACTORED BUTTONS ---
         self.create_btn(
             self.pc_sidebar, "Load Image", self.load_image, mode="primary"
         ).pack(padx=BUTTON_PADDING, pady=10, fill="x")
@@ -499,20 +485,18 @@ class MovicStudio(ctk.CTk):
         parent.grid_columnconfigure(0, weight=1)
         parent.grid_rowconfigure(0, weight=1)
         
-        # --- 1. GRID FRAME (Panel Selector) ---
         self.text_grid_frame = ctk.CTkFrame(parent, fg_color="transparent")
         self.text_grid_frame.grid(row=0, column=0, sticky="nsew")
         self.text_grid_frame.grid_columnconfigure(0, weight=1)
         
-        self.text_grid_frame.grid_rowconfigure(0, weight=0) # Label
-        self.text_grid_frame.grid_rowconfigure(1, weight=1) # Scroll frame expands
+        self.text_grid_frame.grid_rowconfigure(0, weight=0)
+        self.text_grid_frame.grid_rowconfigure(1, weight=1)
         
         ctk.CTkLabel(self.text_grid_frame, text="Step 2: Reorder & Select Text", font=("Archivo", 18, "bold")).grid(row=0, column=0, pady=(40, 10))
         
         self.scroll_frame = ctk.CTkScrollableFrame(self.text_grid_frame, orientation="horizontal", height=320, label_text="Panels")
         self.scroll_frame.grid(row=1, column=0, sticky="ew", padx=20)
         
-        # --- 2. EDITOR FRAME ---
         self.text_editor_frame = ctk.CTkFrame(parent, fg_color="transparent")
         self.text_editor_frame.grid_columnconfigure(1, weight=3) 
         self.text_editor_frame.grid_columnconfigure(2, weight=1) 
@@ -523,7 +507,6 @@ class MovicStudio(ctk.CTk):
         
         ctk.CTkLabel(self.te_sidebar, text="Tools", font=("Archivo", 14, "bold")).pack(pady=20)
         
-        # --- REFACTORED SIDEBAR BUTTONS ---
         self.create_btn(
             self.te_sidebar, "Undo Box", self.handle_undo, mode="outline", height=32
         ).pack(pady=10, padx=BUTTON_PADDING, fill="x")
@@ -670,10 +653,9 @@ class MovicStudio(ctk.CTk):
         path = panel['path']
         region_count = len(panel['text_regions'])
         is_swap_source = (self.swap_source_index == idx)
-        border_color = THEME_COLOR if is_swap_source else "gray" # Theme match
+        border_color = THEME_COLOR if is_swap_source else "gray"
         border_width = 3 if is_swap_source else 0 
         
-        # Main Card Frame
         card = ctk.CTkFrame(self.scroll_frame, width=220, fg_color="#333", border_color=border_color, border_width=border_width)
         card.pack(side="left", padx=10, fill="y")
         
@@ -687,11 +669,9 @@ class MovicStudio(ctk.CTk):
         except: ctk.CTkLabel(card, text="Error").pack(pady=20, padx=8)
         ctk.CTkLabel(card, text=f"Text Boxes: {region_count}", text_color="#D5D9DE" if region_count > 0 else "gray").pack()
         
-        # --- FIXED HIGHLIGHT CUTOFF ---
         controls = ctk.CTkFrame(card, fg_color="transparent")
         controls.pack(pady=(10, 15)) 
         
-        # --- REFACTORED CARD BUTTONS ---
         if self.swap_source_index is None:
             btn_text, btn_mode, btn_color_override, cmd = "Reorder", "outline", "gray", lambda i=idx: self.toggle_swap_mode(i)
         elif self.swap_source_index == idx:
@@ -701,8 +681,6 @@ class MovicStudio(ctk.CTk):
         
         btn_width = 175 if self.swap_source_index is not None else 80 
         
-        # Create Reorder/Swap Button
-        # We pass border_color explicitly if needed (for the gray reorder button)
         reorder_btn = self.create_btn(controls, btn_text, cmd, mode=btn_mode, width=btn_width, height=30)
         
         if btn_color_override:
@@ -710,7 +688,6 @@ class MovicStudio(ctk.CTk):
             
         reorder_btn.pack(side="left", padx=5)
         
-        # Create Edit Button (only if not swapping)
         if self.swap_source_index is None:
             self.create_btn(
                 controls, "Edit", lambda i=idx: self.open_text_editor(i), 
@@ -856,8 +833,6 @@ class MovicStudio(ctk.CTk):
             dropdown = ctk.CTkOptionMenu(row, variable=model_var, values=self.formatted_voice_list, command=update_map, width=200)
             dropdown.pack(side="left", padx=10)
             
-            # --- REFACTORED TEST BUTTON ---
-            # Used 'outline' style for test buttons
             test_btn = self.create_btn(
                 row, "Test", None, mode="outline", width=50, height=30
             )
